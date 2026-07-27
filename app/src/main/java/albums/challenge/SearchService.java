@@ -6,10 +6,10 @@ import albums.challenge.models.Results;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 @Service
 public class SearchService {
@@ -21,6 +21,10 @@ public class SearchService {
         var queryResult = query.isBlank() ? entries : filterByQuery(entries, query);
 
         var itemsFilteredByYear = filterBy(queryResult, years, e -> years.contains(extractYear(e)));
+        var itemsFilteredByPrice = filterBy(queryResult, prices, e -> prices.contains(extractPriceRange(e)));
+
+        var yearFacetList = buildFacetList(itemsFilteredByPrice, years, this::extractYear, Comparator.<String, Integer>comparing(Integer::parseInt).reversed());
+        var priceFacetList = buildFacetList(itemsFilteredByYear, prices, this::extractPriceRange, Comparator.comparing(e -> Integer.parseInt(e.split(" - ")[0])));
 
         // The last list that has all filters applied is the final result. Order doesn't matter.
         var itemsFilteredByYearAndPrice = filterBy(itemsFilteredByYear, prices, e -> prices.contains(extractPriceRange(e)));
@@ -28,14 +32,8 @@ public class SearchService {
         return new Results(
                 itemsFilteredByYearAndPrice,
                 Map.ofEntries(
-                        Map.entry("year", List.of(
-                                new Facet("2002", 25),
-                                new Facet("2008", 2)
-                        )),
-                        Map.entry("price", List.of(
-                                new Facet("5 - 10", 25),
-                                new Facet("10 - 15", 2)
-                        ))
+                        Map.entry("year", yearFacetList),
+                        Map.entry("price", priceFacetList)
                 ),
                 query
         );
@@ -63,6 +61,32 @@ public class SearchService {
 
         return entryList.stream()
                 .filter(filterFunction)
+                .toList();
+    }
+
+    /**
+     * Generic facet builder that takes a list of filtered entries, groups it into a map
+     * of key to number of matches, e.g., "2012" - 12, "0-5" - 2, then maps them to list
+     * of facets while applying sorting from the provided comparator.
+     */
+    List<Facet> buildFacetList(
+            List<Entry> entries,
+            List<String> selected,
+            Function<Entry, String> keyFunction,
+            Comparator<String> comparator
+    ) {
+        var countMap = entries.stream()
+                .collect(Collectors.groupingBy(
+                        keyFunction,
+                        Collectors.summingInt(_ -> 1)
+                ));
+
+        // User-selected filters that dont have match should also end up on UI with 0 count
+        selected.forEach(e -> countMap.putIfAbsent(e, 0));
+
+        return countMap.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(comparator))
+                .map(e -> new Facet(e.getKey(), e.getValue()))
                 .toList();
     }
 
